@@ -5,6 +5,7 @@
 # tower that costs about 1.3 GB of memory and does nothing for dictation, so the
 # weights are fetched from Hugging Face instead. setup.sh reads the two lines below
 # and downloads the file into models/ if it is missing or fails the checksum.
+# examples: examples.tsv examples-qwen.tsv
 # gguf: https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf
 # sha256: 00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4
 FROM models/Qwen3.5-4B-Q4_K_M.gguf

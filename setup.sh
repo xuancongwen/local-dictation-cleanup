@@ -166,12 +166,12 @@ ollama create "$MODEL_NAME" -f "$BUILD_FROM"
 
 info "Smoke test"
 SAMPLE="um so let's meet tuesday no wait wednesday at four"
-RESULT=$(printf '%s\n' "$SAMPLE" | ollama run --nowordwrap "$MODEL_NAME")
+RESULT=$(printf '%s\n' "$SAMPLE" | "$SCRIPT_DIR/wrapper.sh" "$MODEL_NAME")
 printf '    in:  %s\n    out: %s\n' "$SAMPLE" "$RESULT"
 [ -n "$RESULT" ] || die "model returned no output; check 'ollama run $MODEL_NAME' by hand"
 
 if [ "$MODEL_ONLY" -eq 1 ]; then
-    info "Model built. Run ./test.sh for the full check, or pipe text through: echo 'some text' | ollama run --nowordwrap $MODEL_NAME"
+    info "Model built. Run ./test.sh for the full check, or pipe text through: echo 'some text' | $SCRIPT_DIR/wrapper.sh"
     exit 0
 fi
 
@@ -182,7 +182,7 @@ if grep -Eq '^[[:space:]]*\[output\.post_process\]' "$CONFIG"; then
     awk '/^[[:space:]]*\[output\.post_process\]/ { p = 1; print; next }
          p && /^[[:space:]]*\[/ { exit }
          p { print }' "$CONFIG" | sed 's/^/    /'
-    printf '    Edit it by hand if you want it to use: ollama run --nowordwrap %s\n' "$MODEL_NAME"
+    printf '    Edit it by hand if you want it to use: command = "%s/wrapper.sh"\n' "$SCRIPT_DIR"
 else
     BACKUP="$CONFIG.bak.$(date +%Y%m%d%H%M%S)"
     cp "$CONFIG" "$BACKUP"
@@ -192,7 +192,7 @@ else
 
 # Added by voxtype-llm-wrapper/setup.sh
 [output.post_process]
-command = "ollama run --nowordwrap $MODEL_NAME"
+command = "$SCRIPT_DIR/wrapper.sh"
 timeout_ms = 30000
 trim = true
 fallback_on_empty = true

@@ -4,6 +4,7 @@
 # (commercial use permitted). See profiles/max for why the weights come from
 # Hugging Face rather than the Ollama library. setup.sh reads the two lines below
 # and downloads the file into models/ if it is missing or fails the checksum.
+# examples: examples.tsv examples-qwen.tsv
 # gguf: https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q4_K_M.gguf
 # sha256: aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223
 FROM models/Qwen3.5-2B-Q4_K_M.gguf
