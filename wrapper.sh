@@ -11,16 +11,20 @@
 # writes, else max. LDC_URL overrides the server address and LDC_REQUEST the
 # request file. Only curl is needed; JSON is encoded and decoded in awk.
 #
-# Around the model call it adds two defenses against dictation that tries to
-# take over the model:
+# Around the model call it adds three defenses against dictation that tries to
+# take over the model, and against edits that change what was said:
 #
 #   1. Chat-template control tokens (<|im_end|>, <|start_of_role|>, <think>,
 #      and the like) are stripped from the input, so text cannot close the
 #      user turn and open a fake assistant or system turn.
 #   2. If the output contains more than a few words the speaker never said,
 #      the model has answered, translated, summarized, or role-played instead
-#      of editing, and the raw transcript is printed instead. A note goes to
-#      stderr.
+#      of editing, and the raw transcript is printed instead.
+#   3. The same happens if the output has a number, written in digits, that
+#      the speaker never said in any form (number-check.awk): a changed port or
+#      price, or the answer to dictated arithmetic.
+#
+# When a check fails, a note saying why goes to stderr.
 
 set -u
 
@@ -104,9 +108,15 @@ novel=$(printf '%s\n%s\n' "$(printf '%s' "$input" | tr '\n' ' ')" "$output" | LC
     END { printf "%d %d\n", novel, total }')
 new=${novel% *}; total=${novel#* }
 
+badnums=$(printf '%s\n%s\n' "$(printf '%s' "$input" | tr '\n' ' ')" "$output" |
+    LC_ALL=C awk -f "$SCRIPT_DIR/number-check.awk")
+
 # More than 3 unexplained words, and more than a quarter of the output.
 if [ "$new" -gt 3 ] && [ $((new * 4)) -gt "$total" ]; then
     printf 'wrapper: output had %d of %d words not in the input; typing the raw transcript\n' "$new" "$total" >&2
+    printf '%s\n' "$input"
+elif [ -n "$badnums" ]; then
+    printf 'wrapper: output had numbers not in the input (%s); typing the raw transcript\n' "$badnums" >&2
     printf '%s\n' "$input"
 else
     printf '%s\n' "$output"

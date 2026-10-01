@@ -1,0 +1,16 @@
+# Profile: tiny
+# Smallest footprint. Measured about 0.55 GB of model memory (weights, caches,
+# and buffers) under llama-server; the whole CPU-only server process stays
+# under 0.85 GB. Weaker edits than standard: see the README.
+# Base model: Qwen2.5-0.5B-Instruct, Qwen's own GGUF. License: Apache 2.0
+# (commercial use permitted).
+#
+# Read by gen-prompts.sh and setup.sh as KEY=value lines.
+GGUF_URL=https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
+GGUF_SHA256=74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db
+# A shorter prompt than the other profiles: on this model it fails fewer cases
+# and obeys fewer attacks than system_prompt.txt (tune.sh, 2026-09-30).
+PROMPT=system_prompt_tiny.txt
+EXAMPLES="examples.tsv examples-tiny.tsv"
+# Plain ChatML; Qwen2.5 has no thinking mode.
+CHAT_FORMAT=chatml

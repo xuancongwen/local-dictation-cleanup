@@ -8,9 +8,9 @@
 # or only for the given profile files (tune.sh passes a temporary one). Prompt
 # and example paths in a profile are relative to the repo unless absolute.
 #
-# Each file is a complete body for llama-server's /completion endpoint whose "prompt" holds
-# the system prompt and every example, already in the model's chat format, with
-# {{TRANSCRIPT}} where the dictation goes. Replace the placeholder with the
+# Each file is a complete body for llama-server's /completion endpoint whose
+# "prompt" holds the system prompt and every example, already in the model's
+# chat format, with {{TRANSCRIPT}} where the dictation goes. Replace the placeholder with the
 # JSON-escaped transcript followed by \n and POST it; wrapper.sh does exactly
 # that, and an app can load the same file. Because every request shares the
 # same text up to the placeholder, llama-server reuses its cache for all of it.
@@ -48,7 +48,10 @@ json_escape() {
 # \n in an edited column expanded to a real line break (as \n escapes, so each
 # turn stays on one line here).
 turns() {
-    printf 'system\t'; json_escape < "$(src "$PROMPT")"; printf '\n'
+    printf 'system\t'
+    if [ "$TRIM_PROMPT" = yes ]; then printf '%s' "$(cat "$(src "$PROMPT")")" | json_escape
+    else json_escape < "$(src "$PROMPT")"; fi
+    printf '\n'
     for f in $EXAMPLES; do
         while IFS="$TAB" read -r raw edited; do
             [ -n "$raw" ] || continue
@@ -62,7 +65,7 @@ turns() {
 for profile in "$@"; do
     [ -f "$profile" ] || continue
     name=$(basename "$profile")
-    PROMPT=; EXAMPLES=; CHAT_FORMAT=
+    PROMPT=; EXAMPLES=; CHAT_FORMAT=; TRIM_PROMPT=
     . "$profile"
     for f in $PROMPT $EXAMPLES; do
         [ -f "$(src "$f")" ] || { printf 'error: %s not found (profile %s)\n' "$f" "$name" >&2; exit 1; }
@@ -75,10 +78,10 @@ for profile in "$@"; do
             body="$body<|im_start|>user\\n{{TRANSCRIPT}}<|im_end|>\\n<|im_start|>assistant\\n<think>\\n\\n</think>\\n\\n"
             stop='"<|im_end|>", "<|im_start|>"'
             ;;
-        granite)
-            body=$(turns | awk -F '\t' '{ printf "%s<|start_of_role|>%s<|end_of_role|>%s<|end_of_text|>", (NR > 1 ? "\\n" : ""), $1, $2 }')
-            body="$body\\n<|start_of_role|>user<|end_of_role|>{{TRANSCRIPT}}<|end_of_text|>\\n<|start_of_role|>assistant<|end_of_role|>"
-            stop='"<|end_of_text|>", "<|start_of_role|>"'
+        chatml)
+            body=$(turns | awk -F '\t' '{ printf "<|im_start|>%s\\n%s<|im_end|>\\n", $1, $2 }')
+            body="$body<|im_start|>user\\n{{TRANSCRIPT}}<|im_end|>\\n<|im_start|>assistant\\n"
+            stop='"<|im_end|>", "<|im_start|>"'
             ;;
         *) printf 'error: profiles/%s has unknown CHAT_FORMAT "%s"\n' "$name" "$CHAT_FORMAT" >&2; exit 1 ;;
     esac

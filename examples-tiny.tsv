@@ -1,0 +1,4 @@
+# Extra example for the tiny profile (Qwen2.5-0.5B). More examples made that
+# model copy them or answer requests more often; this one improved its
+# self-corrections without that. Same format as examples.tsv.
+meet me at the cafe no wait the library	Meet me at the library.

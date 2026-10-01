@@ -5,8 +5,9 @@
 # Usage: ./setup.sh [--profile NAME] [--model-only]
 #
 #   --profile NAME  Which profile in profiles/ to run: "max" (Qwen3.5-4B,
-#                   3.0 GB while loaded) or "standard" (Qwen3.5-2B, 1.5 GB).
-#                   Defaults to standard on macOS and max everywhere else.
+#                   3.0 GB while loaded), "standard" (Qwen3.5-2B, 1.5 GB), or
+#                   "tiny" (Qwen2.5-0.5B, 0.6 GB). Defaults to standard on
+#                   macOS and max everywhere else.
 #   --model-only    Download the model, render the prompts, and start the
 #                   server, but do not touch voxtype. Implied on macOS, where
 #                   voxtype does not run.
