@@ -2,9 +2,11 @@
 # Run the dictation cases in test-cases.tsv through wrapper.sh, exactly as
 # voxtype does, and report how closely each output matches the expected text.
 #
-# Usage: ./test.sh [MODEL_NAME]
+# Usage: ./test.sh [PROFILE]
 #
-# MODEL_NAME defaults to voxtype-llm-wrapper. Each line of test-cases.tsv is
+# PROFILE defaults to the one setup.sh made active. llama-server must already
+# be running with that profile's model (LDC_URL picks a server other than the
+# default); the script checks before it starts. Each line of test-cases.tsv is
 # "input<TAB>expected", with \n in the expected column standing for a line
 # break and <empty> meaning the model should output nothing. Lines with an
 # empty expected column are printed for eyeballing but not scored.
@@ -22,19 +24,24 @@
 # passed the raw transcript through. It scores as a FAIL, since the model
 # answered or rewrote instead of editing, though what got typed was harmless.
 #
-# Extra flags for "ollama run" can be passed in the RUN_ARGS environment
-# variable, e.g. RUN_ARGS=--think=false for a model with a thinking mode.
-#
 # Exit status is non-zero if any scored case FAILs. NEAR does not fail.
 
 set -u
 
-MODEL=${1:-voxtype-llm-wrapper}
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+PROFILE=${1:-$(cat "$SCRIPT_DIR/.active-profile" 2>/dev/null || echo max)}
+URL=${LDC_URL:-http://127.0.0.1:8189}
 CASES="$SCRIPT_DIR/test-cases.tsv"
+export LDC_PROFILE="$PROFILE"
 
-command -v ollama >/dev/null 2>&1 || { echo "error: ollama not found" >&2; exit 1; }
 [ -f "$CASES" ] || { echo "error: $CASES not found" >&2; exit 1; }
+[ -f "$SCRIPT_DIR/profiles/$PROFILE" ] || { echo "error: no profile named $PROFILE" >&2; exit 1; }
+
+# Refuse to score one profile's prompt against another profile's model.
+want=$(. "$SCRIPT_DIR/profiles/$PROFILE"; basename "$GGUF_URL")
+loaded=$(curl -s "$URL/props" | grep -o '"model_path":"[^"]*"' | sed 's/.*\///; s/"$//')
+[ -n "$loaded" ] || { echo "error: no llama-server answering at $URL" >&2; exit 1; }
+[ "$loaded" = "$want" ] || { echo "error: $URL is serving $loaded, but profile $PROFILE needs $want" >&2; exit 1; }
 
 # Drop list markers, lowercase, and strip everything that is not a letter or digit.
 lenient() {
@@ -51,7 +58,7 @@ TAB=$(printf '\t')
 while IFS="$TAB" read -r input expected; do
     [ -n "$input" ] || continue
     case "$input" in '#'*) continue ;; esac
-    got=$(printf '%s\n' "$input" | "$SCRIPT_DIR/wrapper.sh" "$MODEL" 2>"$ERR" | sed -e 's/[[:space:]]*$//')
+    got=$(printf '%s\n' "$input" | "$SCRIPT_DIR/wrapper.sh" 2>"$ERR" | sed -e 's/[[:space:]]*$//')
     guard=""; grep -q 'wrapper: output had' "$ERR" && guard=" [guard]" && guarded=$((guarded + 1))
     if [ -z "$expected" ]; then
         unscored=$((unscored + 1))
@@ -75,5 +82,5 @@ while IFS="$TAB" read -r input expected; do
     fi
 done < "$CASES"
 
-printf '\n%s: %d pass, %d near, %d fail, %d unscored, %d guarded\n' "$MODEL" "$pass" "$near" "$fail" "$unscored" "$guarded"
+printf '\n%s: %d pass, %d near, %d fail, %d unscored, %d guarded\n' "$PROFILE" "$pass" "$near" "$fail" "$unscored" "$guarded"
 [ "$fail" -eq 0 ]

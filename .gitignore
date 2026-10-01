@@ -1,2 +1,6 @@
 # Base model weights downloaded by setup.sh (see profiles/).
 models/
+# The profile setup.sh last installed; read by wrapper.sh and test.sh.
+.active-profile
+# tune.sh output.
+.tune/

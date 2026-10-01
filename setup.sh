@@ -1,32 +1,33 @@
 #!/bin/sh
-# Build the voxtype-llm-wrapper model in Ollama and point voxtype at it.
+# Set up the local-dictation-cleanup model under llama-server and point voxtype
+# at it.
 #
-# Usage: ./setup.sh [--profile NAME] [--model-only] [BASE_MODEL]
+# Usage: ./setup.sh [--profile NAME] [--model-only]
 #
-#   --profile NAME  Which profile in profiles/ to build: "max" (Qwen3.5-4B,
-#                   4.9 GB while loaded), "standard" (Qwen3.5-2B, 2.4 GB), or
-#                   "fast" (granite3.3:2b, 2.1 GB, lowest latency).
+#   --profile NAME  Which profile in profiles/ to run: "max" (Qwen3.5-4B,
+#                   3.0 GB while loaded) or "standard" (Qwen3.5-2B, 1.5 GB).
 #                   Defaults to standard on macOS and max everywhere else.
-#   --model-only    Build the Ollama model and stop; do not touch voxtype.
-#                   Implied on macOS, where voxtype does not run.
-#   BASE_MODEL      Override the FROM line of the chosen profile for this run
-#                   only (e.g. ./setup.sh gemma3:4b). Any TEMPLATE and stop
-#                   tokens in the profile are dropped too, since they belong to
-#                   the profile's own base model. Nothing in the repo is
-#                   modified.
+#   --model-only    Download the model, render the prompts, and start the
+#                   server, but do not touch voxtype. Implied on macOS, where
+#                   voxtype does not run.
 #
-# Assumes Ollama and voxtype (1.0 or newer) are already installed. The script
+# Steps: download the profile's GGUF into models/ (verifying its sha256),
+# render prompts/<profile>.json, record the profile in .active-profile for
+# wrapper.sh, install and start a "local-dictation-cleanup" systemd user
+# service running llama-server with that model, smoke-test it, add an
+# [output.post_process] block to the voxtype config, and restart voxtype.
+#
+# Assumes llama.cpp (llama-server) and voxtype 1.0 or newer are installed. It
 # checks for both and stops with a message if either is missing. It never
 # installs packages and never overwrites an existing post_process block.
-#
-# A profile whose FROM line is a file path (the max and standard profiles) carries
-# "# gguf: URL" and "# sha256: HASH" lines. The script downloads that file into
-# models/ next to this script if it is missing or its checksum does not match.
+# Switching profiles is re-running it with another --profile.
 
 set -eu
 
-MODEL_NAME="voxtype-llm-wrapper"
+SERVICE=local-dictation-cleanup
+PORT=8189
 CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/voxtype/config.toml"
+UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 
 info() { printf '==> %s\n' "$*"; }
@@ -44,12 +45,11 @@ sha256_of() {
 fetch_gguf() {
     url=$1; dest=$2; want=$3
     if [ -f "$dest" ] && { [ -z "$want" ] || [ "$(sha256_of "$dest")" = "$want" ]; }; then
-        info "Base model weights already present at $dest"
+        info "Model weights already present at $dest"
         return
     fi
-    command -v curl >/dev/null 2>&1 || die "curl is needed to download $url"
     mkdir -p "$(dirname "$dest")"
-    info "Downloading base model weights from $url"
+    info "Downloading model weights from $url"
     info "One-time download of a few GB into $(dirname "$dest")"
     curl -L --fail --progress-bar -C - -o "$dest" "$url" || die "download failed"
     if [ -n "$want" ]; then
@@ -68,7 +68,6 @@ fetch_gguf() {
 OS=$(uname -s 2>/dev/null || echo unknown)
 PROFILE=""
 MODEL_ONLY=0
-BASE_OVERRIDE=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -76,8 +75,7 @@ while [ $# -gt 0 ]; do
         --profile=*) PROFILE=${1#--profile=}; shift ;;
         --model-only) MODEL_ONLY=1; shift ;;
         -h|--help)   sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-        -*)          die "unknown option $1" ;;
-        *)           [ -z "$BASE_OVERRIDE" ] || die "unexpected argument $1"; BASE_OVERRIDE=$1; shift ;;
+        *)           die "unknown argument $1 (see --help)" ;;
     esac
 done
 
@@ -88,19 +86,20 @@ case "$OS" in Darwin) MODEL_ONLY=1 ;; esac
 
 PROFILE_FILE="$SCRIPT_DIR/profiles/$PROFILE"
 [ -f "$PROFILE_FILE" ] || die "no profile named '$PROFILE' in $SCRIPT_DIR/profiles (have: $(ls "$SCRIPT_DIR/profiles" | tr '\n' ' '))"
+GGUF_URL=; GGUF_SHA256=
+. "$PROFILE_FILE"
+[ -n "$GGUF_URL" ] || die "profiles/$PROFILE has no GGUF_URL"
+GGUF="$SCRIPT_DIR/models/$(basename "$GGUF_URL")"
 
 # --- Preflight checks -------------------------------------------------------
 
-command -v ollama >/dev/null 2>&1 \
-    || die "ollama is not installed. See https://ollama.com/download"
-
-if ! ollama list >/dev/null 2>&1; then
-    die "Ollama is installed but not running. Start it with 'ollama serve' (or the Ollama app on macOS), then re-run this script."
-fi
+command -v curl >/dev/null 2>&1 || die "curl is not installed"
+LLAMA_SERVER=$(command -v llama-server 2>/dev/null) \
+    || die "llama-server is not installed. On Arch: pacman -S llama-cpp ggml-cuda (or ggml-vulkan). Elsewhere: https://github.com/ggml-org/llama.cpp"
 
 if [ "$MODEL_ONLY" -eq 0 ]; then
     command -v voxtype >/dev/null 2>&1 \
-        || die "voxtype is not installed. See https://github.com/peteonrails/voxtype (or pass --model-only to build just the model)"
+        || die "voxtype is not installed. See https://github.com/peteonrails/voxtype (or pass --model-only)"
 
     VOXTYPE_VERSION=$(voxtype --version 2>/dev/null | awk '{print $NF}')
     VOXTYPE_MAJOR=${VOXTYPE_VERSION%%.*}
@@ -114,64 +113,63 @@ if [ "$MODEL_ONLY" -eq 0 ]; then
         || die "no voxtype config at $CONFIG. Run 'voxtype' once to generate the default config, then re-run this script."
 fi
 
-# --- Build the model --------------------------------------------------------
+# --- Model and prompt -------------------------------------------------------
 
-info "Rendering Modelfiles from system_prompt.txt, examples.tsv, and profiles/"
-"$SCRIPT_DIR/gen-modelfiles.sh" >/dev/null
-MODELFILE="$SCRIPT_DIR/Modelfile.$PROFILE"
+fetch_gguf "$GGUF_URL" "$GGUF" "$GGUF_SHA256"
 
-BASE_MODEL=${BASE_OVERRIDE:-$(awk '/^FROM[[:space:]]/ {print $2; exit}' "$MODELFILE")}
-[ -n "$BASE_MODEL" ] || die "could not determine base model from $MODELFILE"
+info "Rendering prompts/ from system prompts, examples, and profiles/"
+"$SCRIPT_DIR/gen-prompts.sh" >/dev/null
+printf '%s\n' "$PROFILE" > "$SCRIPT_DIR/.active-profile"
 
-if [ -n "$BASE_OVERRIDE" ]; then
-    info "Pulling base model $BASE_MODEL (skips quickly if already present)"
-    ollama pull "$BASE_MODEL"
-    TMP_MODELFILE=$(mktemp)
-    trap 'rm -f "$TMP_MODELFILE"' EXIT
-    # Swap the FROM line and drop the profile's TEMPLATE block and stop tokens,
-    # which are specific to the profile's own base model.
-    awk -v base="$BASE_MODEL" '
-        /^FROM[[:space:]]/  { print "FROM " base; next }
-        /^PARAMETER stop /  { next }
-        /^TEMPLATE """/     { skip = 1; next }
-        skip                { if (/"""[[:space:]]*$/) skip = 0; next }
-        { print }' "$MODELFILE" > "$TMP_MODELFILE"
-    BUILD_FROM="$TMP_MODELFILE"
-else
-    case "$BASE_MODEL" in
-        *.gguf)
-            GGUF_URL=$(awk '/^# gguf:/ {print $3; exit}' "$PROFILE_FILE")
-            GGUF_SHA=$(awk '/^# sha256:/ {print $3; exit}' "$PROFILE_FILE")
-            [ -n "$GGUF_URL" ] || die "profile $PROFILE uses a GGUF file but has no '# gguf: URL' line"
-            fetch_gguf "$GGUF_URL" "$SCRIPT_DIR/$BASE_MODEL" "$GGUF_SHA"
-            ;;
-        *)
-            info "Pulling base model $BASE_MODEL (skips quickly if already present)"
-            ollama pull "$BASE_MODEL"
-            ;;
-    esac
-    BUILD_FROM="$MODELFILE"
+# --- Server -----------------------------------------------------------------
+
+# -ub 64 matters for the Qwen3.5 profiles: llama-server can only resume their
+# hybrid-attention state from a checkpoint it takes one micro-batch before the
+# end of the prompt, so a small micro-batch means only the new dictation and a
+# few dozen tokens are evaluated per request instead of hundreds.
+SERVER_CMD="$LLAMA_SERVER -m $GGUF -ngl 99 -c 4096 -np 1 -ub 64 --host 127.0.0.1 --port $PORT"
+
+if [ "$OS" = Darwin ] || ! command -v systemctl >/dev/null 2>&1; then
+    info "No systemd here, so start the server yourself and keep it running:"
+    printf '    %s\n' "$SERVER_CMD"
+    info "Then pipe text through: echo 'some text' | $SCRIPT_DIR/wrapper.sh"
+    exit 0
 fi
 
-# Unload any resident copy of the previous build first. Ollama keeps a model
-# loaded for as long as its keep-alive says, and rebuilding under the same name
-# leaves the old runner holding memory with no name pointing at it.
-if ollama ps 2>/dev/null | grep -q "^$MODEL_NAME"; then
-    info "Unloading the currently loaded $MODEL_NAME"
-    ollama stop "$MODEL_NAME" >/dev/null 2>&1 || true
-fi
+mkdir -p "$UNIT_DIR"
+cat > "$UNIT_DIR/$SERVICE.service" <<EOT
+# Written by $SCRIPT_DIR/setup.sh (profile: $PROFILE). Re-run it to change.
+[Unit]
+Description=local-dictation-cleanup model server (llama-server, profile $PROFILE)
 
-info "Building $MODEL_NAME (profile: $PROFILE, base: $BASE_MODEL)"
-ollama create "$MODEL_NAME" -f "$BUILD_FROM"
+[Service]
+ExecStart=$SERVER_CMD
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+EOT
+info "Starting the $SERVICE user service (profile: $PROFILE)"
+systemctl --user daemon-reload
+systemctl --user enable "$SERVICE" >/dev/null 2>&1
+systemctl --user restart "$SERVICE"
+
+info "Waiting for the model to load"
+i=0
+until curl -s "http://127.0.0.1:$PORT/health" | grep -q '"ok"'; do
+    i=$((i + 1))
+    [ "$i" -le 120 ] || die "llama-server did not come up; see: journalctl --user -u $SERVICE"
+    sleep 1
+done
 
 info "Smoke test"
 SAMPLE="um so let's meet tuesday no wait wednesday at four"
-RESULT=$(printf '%s\n' "$SAMPLE" | "$SCRIPT_DIR/wrapper.sh" "$MODEL_NAME")
+RESULT=$(printf '%s\n' "$SAMPLE" | "$SCRIPT_DIR/wrapper.sh")
 printf '    in:  %s\n    out: %s\n' "$SAMPLE" "$RESULT"
-[ -n "$RESULT" ] || die "model returned no output; check 'ollama run $MODEL_NAME' by hand"
+[ -n "$RESULT" ] || die "model returned no output; see: journalctl --user -u $SERVICE"
 
 if [ "$MODEL_ONLY" -eq 1 ]; then
-    info "Model built. Run ./test.sh for the full check, or pipe text through: echo 'some text' | $SCRIPT_DIR/wrapper.sh"
+    info "Model running. Run ./test.sh for the full check, or pipe text through: echo 'some text' | $SCRIPT_DIR/wrapper.sh"
     exit 0
 fi
 
@@ -183,6 +181,12 @@ if grep -Eq '^[[:space:]]*\[output\.post_process\]' "$CONFIG"; then
          p && /^[[:space:]]*\[/ { exit }
          p { print }' "$CONFIG" | sed 's/^/    /'
     printf '    Edit it by hand if you want it to use: command = "%s/wrapper.sh"\n' "$SCRIPT_DIR"
+    # Earlier versions of this project ran the model through Ollama.
+    if awk '/^[[:space:]]*\[output\.post_process\]/ { p = 1; next } p && /^[[:space:]]*\[/ { exit }
+            p && /ollama run/ { found = 1 } END { exit !found }' "$CONFIG"; then
+        info "That block still runs the model through Ollama, which this project no longer uses."
+        info "Change its command line to the one above. The old Ollama models can then be removed with 'ollama rm'."
+    fi
 else
     BACKUP="$CONFIG.bak.$(date +%Y%m%d%H%M%S)"
     cp "$CONFIG" "$BACKUP"
@@ -190,7 +194,7 @@ else
     info "Appending [output.post_process] to $CONFIG"
     cat >> "$CONFIG" <<EOT
 
-# Added by voxtype-llm-wrapper/setup.sh
+# Added by local-dictation-cleanup/setup.sh
 [output.post_process]
 command = "$SCRIPT_DIR/wrapper.sh"
 timeout_ms = 30000

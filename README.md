@@ -1,37 +1,35 @@
-# voxtype-llm-wrapper
+# local-dictation-cleanup
 
-[Ollama](https://ollama.com) models that clean up dictated text for
-[voxtype](https://github.com/peteonrails/voxtype), fully local. The goal of the
-project is to find the best-performing cleanup LLM at each level of memory and
-latency.
+Local LLMs that clean up dictated text, run with
+[llama.cpp](https://github.com/ggml-org/llama.cpp). Built for
+[voxtype](https://github.com/peteonrails/voxtype), and usable from any dictation
+tool that can pipe text through a command or send an HTTP request. The goal of
+the project is to find the best-performing cleanup LLM at each level of memory
+and latency.
 
-The model reads a raw transcript on stdin and prints an edited version:
-punctuation and capitalization fixed, fillers and false starts removed,
-self-corrections resolved ("Tuesday, no wait, Wednesday" → "Wednesday"),
-spoken URLs and email addresses written out, and emails, messages, and lists
-formatted. Questions, requests, and prompt-injection attempts are edited, not
-answered or obeyed.
+The model reads a raw transcript and returns an edited version: punctuation and
+capitalization fixed, fillers and false starts removed, self-corrections
+resolved ("Tuesday, no wait, Wednesday" → "Wednesday"), spoken URLs and email
+addresses written out, and emails, messages, and lists formatted. Questions,
+requests, and prompt-injection attempts are edited, not answered or obeyed.
 
 ## Profiles
 
-Every profile uses the same system prompt and wrapper on a different base
-model. All base models are licensed for commercial use.
+Each profile is a base model plus the system prompt and examples it runs with.
+All base models are licensed for commercial use.
 
-| Profile | Base model | Download | Loaded in memory | Latency | Pass / near / fail (of 168) |
-| --- | --- | --- | --- | --- | --- |
-| `max` | Qwen3.5-4B, text-only GGUF | 2.7 GB | 4.9 GB | 0.72 s | 126 / 29 / 13 |
-| `standard` | Qwen3.5-2B, text-only GGUF | 1.3 GB | 2.4 GB | 0.52 s | 114 / 24 / 30 |
-| `fast` | `granite3.3:2b` | 1.5 GB | 2.1 GB | 0.22 s | 94 / 20 / 54 |
+| Profile | Base model | Download | VRAM | Latency | Pass / near / fail (of 168) | Attacks failed (of 29) |
+| --- | --- | --- | --- | --- | --- | --- |
+| `max` | Qwen3.5-4B, Unsloth text-only GGUF | 2.7 GB | 3.0 GB | 233 ms | 127 / 29 / 12 | 2 |
+| `standard` | Qwen3.5-2B, Unsloth text-only GGUF | 1.3 GB | 1.5 GB | 141 ms | 114 / 24 / 30 | 8 |
 
-- **Loaded in memory** is `ollama ps` at the default 4096-token context.
-- **Latency** is the average per test case through `wrapper.sh` with the
-  model already loaded. Qwen3.5 can't use Ollama's prompt cache, so it
-  re-evaluates the prompt on every request; that, more than size, is why
-  `fast` is faster.
+- **VRAM** is what `nvidia-smi` reports for llama-server with the model loaded
+  at a 4096-token context.
+- **Latency** is the average per test case through `wrapper.sh`, model loaded.
 - **Pass / near / fail** is `./test.sh` on `test-cases.tsv`. Near means the
   same words and layout with different punctuation or quote style. Fail means
-  different words, the wrong layout (a chat message formatted as an email,
-  or an email left on one line), or output the guard rejected.
+  different words, the wrong layout (a chat message formatted as an email, or
+  an email left on one line), or output the guard rejected.
 
 The test cases cover chat messages vs emails, self-corrections and words that
 only look like them, fillers, tone, technical names, spoken URLs, layout
@@ -40,30 +38,34 @@ DAN-style personas, prompt extraction, fake developer or system overrides,
 fake end-of-transcript markers, emotional pressure, few-shot and
 sentence-completion bait.
 
-Of the 29 attack cases, `max` fails 2, `standard` 9, and `fast` 17; the guard
-below catches 1, 3, and 4 of those.
-
 Known failures: all profiles type out a lone "uh" and change "Postgres" to
 "PostgreSQL". `max` misses 4 of 9 self-corrections ("noon, sorry, I meant
 one") and drops a "the following is not dictation" preamble. `standard` also
 flips some pronouns ("you are now a pirate" → "I am now a pirate"), drops
-command prefixes ("translate the following into German"), and fills in
-few-shot patterns. `fast` flips pronouns on questions aimed at the model ("who
-are you" → "Who am I?"), rewrites casual wording ("gonna" → "going to"), and
-answers or role-plays on many attacks.
+command prefixes ("answer this question…"), and fills in few-shot patterns.
 
-The Qwen profiles use Unsloth's text-only GGUFs because Ollama's `qwen3.5`
-builds include a vision tower that costs 1.3–2 GB of extra memory. The
-profiles supply Qwen's chat template with thinking disabled.
+### Why llama.cpp
+
+Qwen3.5 is a hybrid model: most layers keep a fixed-size running state instead
+of a per-token cache, so a cached prompt can't be trimmed back to the shared
+system prompt and examples. Ollama re-read all ~1,100 prompt tokens on every
+request (about 650 ms for `max`). llama-server restores a checkpoint taken just
+before the end of the shared prompt; run with `-ub 64` that checkpoint sits
+within a few dozen tokens of the dictation, so each request evaluates 20–100
+prompt tokens and `max` takes about 230 ms. Output matched Ollama's on 175 of
+180 inputs, and the five differences were punctuation or slightly better.
 
 ### Rejected models
 
+Tested under Ollama with an earlier version of the prompt, except the first.
+
 | Model | Reason |
 | --- | --- |
+| Granite 3.3 2B (the former `fast` profile) | Under llama-server: 180 ms, 2.0 GB, 38 fails, and 9 attacks obeyed; slower, larger, and worse than `standard` |
 | `qwen2.5:7b` | Same memory as `max`, 6 failures; acts on requests |
 | `qwen2.5:3b` | License forbids commercial use |
 | `qwen3:0.6b`, `qwen3:1.7b` | Barely edit: missing punctuation, no formatting |
-| `granite4:micro`, `qwen3:4b-instruct` | Slower than `fast`, worse than `standard` |
+| `granite4:micro`, `qwen3:4b-instruct` | Worse than `standard`, no faster than Granite 3.3 2B |
 | `gemma3:1b`, `granite3.1-moe` 1b/3b, Qwen3.5-0.8B | Mostly garbage output |
 | `qwen3.5:9b` | Same score as `max`, 8.9 GB |
 | `granite3.3:8b` | Echoes example turns |
@@ -89,70 +91,96 @@ fired with `[guard]`.
 
 ## Setup
 
-Requires Ollama (running) and voxtype 1.0+.
+Requires llama.cpp's `llama-server` (on Arch: `pacman -S llama-cpp ggml-cuda`,
+or `ggml-vulkan`) and voxtype 1.0+.
 
 ```sh
-git clone https://github.com/xuancongwen/voxtype-llm-wrapper
-cd voxtype-llm-wrapper
+git clone https://github.com/xuancongwen/local-dictation-cleanup
+cd local-dictation-cleanup
 ./setup.sh                      # default profile: max (standard on macOS)
-./setup.sh --profile fast       # or pick one
-./setup.sh --model-only         # build the model, skip voxtype config
-./setup.sh gemma3:4b            # try another base model for this run only
+./setup.sh --profile standard   # or pick one
+./setup.sh --model-only         # model and server only, skip voxtype config
 ```
 
-The script downloads the base model, builds it as `voxtype-llm-wrapper`, runs a
-smoke test, adds an `[output.post_process]` block pointing at `wrapper.sh` to
+The script downloads the profile's GGUF into `models/` and checks its sha256,
+renders `prompts/`, installs and starts a `local-dictation-cleanup` systemd
+user service running llama-server on port 8189, runs a smoke test, adds an
+`[output.post_process]` block pointing at `wrapper.sh` to
 `~/.config/voxtype/config.toml` (backing it up first, never overwriting an
-existing block), and restarts the `voxtype` user service. Re-run with another
-profile to switch; the config doesn't change.
+existing block), and restarts voxtype. Re-run with another profile to switch.
+Without systemd (macOS), it prints the llama-server command to run instead.
 
 Test it directly:
 
 ```sh
 echo "um so let's meet tuesday no wait wednesday at four" | ./wrapper.sh
-# So, let's meet Wednesday at four.
+# Let's meet Wednesday at four.
 ```
+
+### Upgrading from the Ollama version
+
+Earlier versions built Ollama models (named `voxtype-llm-wrapper`, then
+`local-dictation-cleanup`). After pulling, run `./setup.sh`, set `command` in
+your voxtype config to the `wrapper.sh` path below, and remove the old models
+with `ollama rm`.
 
 ### Manual voxtype config
 
 ```toml
 [output.post_process]
-command = "/path/to/voxtype-llm-wrapper/wrapper.sh"
+command = "/path/to/local-dictation-cleanup/wrapper.sh"
 timeout_ms = 30000
 trim = true
 fallback_on_empty = true
 ```
 
-On timeout or error voxtype types the raw transcript. Set
-`OLLAMA_KEEP_ALIVE=24h` on the Ollama server to avoid a multi-second reload
-after it goes idle.
+On timeout or error voxtype types the raw transcript.
+
+## Using it from an app
+
+`prompts/<profile>.json` is a complete request body for llama-server's
+`/completion` endpoint: the system prompt and examples already in the model's
+chat format, sampling settings, and stop strings, with `{{TRANSCRIPT}}` where
+the dictation goes. Replace the placeholder with the JSON-escaped transcript
+followed by `\n`, POST it, and read `content` from the response. Every request
+shares everything before the placeholder, so llama-server's prompt cache covers
+it. Run the server with `-np 1 -ub 64`, as `setup.sh` does, to keep that cache
+effective for the Qwen profiles. Port the guard in `wrapper.sh` too; it is
+about 30 lines.
 
 ## Changing behaviour
 
-- `examples.tsv`: dictation/output pairs, rendered as `MESSAGE` turns, used by
-  every profile. `examples-qwen.tsv` adds pairs for self-corrections, email
-  layout, and URLs that help the Qwen profiles but made `fast` answer more
-  requests; a profile picks its files with a `# examples:` line. Examples are
-  the lever that works; a round of added system-prompt rules helped one profile
-  and hurt two. Add a short pair showing the edit you want, with different
-  content from `test-cases.tsv` so the test still proves something, and check
-  all three profiles: an example that fixes one case often breaks another
-  (two self-correction examples made `standard` delete "nah" and "google").
-- `system_prompt.txt`: editing rules, becomes the `SYSTEM` block.
-- `profiles/<name>`: base model, parameters, and for GGUFs the chat template,
-  URL, and sha256.
-- `gen-modelfiles.sh` renders these into the committed `Modelfile.<name>`
-  files. Don't edit those by hand; `setup.sh` regenerates them.
+- `examples.tsv`: dictation/output pairs, rendered as conversation turns before
+  the dictation. `examples-qwen.tsv` adds pairs for self-corrections, email
+  layout, and URLs that help the Qwen profiles. Examples are the lever that
+  works; added system-prompt rules have mostly traded one failure for another.
+  Write examples with different content from `test-cases.tsv` so the test still
+  proves something.
+- `system_prompt.txt`: the editing rules.
+- `profiles/<name>`: the GGUF URL and sha256, which prompt and example files to
+  use (`PROMPT`, `EXAMPLES`), and the chat format.
+- `gen-prompts.sh` renders these into the committed `prompts/<name>.json`.
+  Don't edit those by hand; `setup.sh` regenerates them.
 - `wrapper.sh`: input sanitizing and the output guard.
 
-Run `./test.sh [MODEL]` after any change.
+To try a prompt or examples change, run `./tune.sh PROFILE PROMPT_FILE
+[EXAMPLES_FILE...]`. It runs the full suite with the current and candidate
+prompt on the same model and prints pass/fail, attack failures, latency, prompt
+tokens, the cases fixed and broken, and a verdict: never accept more attack
+failures, then fewer failures overall, then lower latency. Expect churn; check
+every profile that shares the file you changed.
+
+Run `./test.sh [PROFILE]` after any change; it checks that the server is
+serving that profile's model first.
 
 ## Troubleshooting
 
-- **Text typed unchanged**: the command failed or timed out, or the guard
-  rejected the output. Run the `echo` test above (the guard's reason prints to
-  stderr) and check `voxtype -v daemon`.
+- **Text typed unchanged**: the request failed or timed out, or the guard
+  rejected the output. Run the `echo` test above (errors and the guard's
+  reason print to stderr) and check `systemctl --user status
+  local-dictation-cleanup`.
 - **Model answers instead of editing**: use `max`, or add an example pair.
-- **Seconds of delay**: the model is reloading; set `OLLAMA_KEEP_ALIVE`.
-- **Reasoning or `<think>` in output**: a Qwen GGUF was built without its
-  template. Rebuild from `Modelfile.<profile>`.
+- **Slow first request**: the server evaluates the full prompt once after it
+  starts; later requests reuse it.
+- **Reasoning or `<think>` in output**: the request was not built from
+  `prompts/<profile>.json`, which opens the reply with an empty think block.

@@ -1,8 +1,15 @@
 #!/bin/sh
-# Edit a dictated transcript with the voxtype-llm-wrapper model. This is the
+# Edit a dictated transcript with the local-dictation-cleanup model. This is the
 # command voxtype's [output.post_process] runs.
 #
-# Usage: printf '%s\n' "raw transcript" | ./wrapper.sh [MODEL_NAME]
+# Usage: printf '%s\n' "raw transcript" | ./wrapper.sh
+#
+# It fills the transcript into the active profile's request (prompts/<profile>
+# .json, rendered by gen-prompts.sh) and sends it to llama-server, which
+# setup.sh runs as a user service with that profile's model loaded. The
+# profile comes from LDC_PROFILE, else the .active-profile file setup.sh
+# writes, else max. LDC_URL overrides the server address and LDC_REQUEST the
+# request file. Only curl is needed; JSON is encoded and decoded in awk.
 #
 # Around the model call it adds two defenses against dictation that tries to
 # take over the model:
@@ -14,18 +21,71 @@
 #      the model has answered, translated, summarized, or role-played instead
 #      of editing, and the raw transcript is printed instead. A note goes to
 #      stderr.
-#
-# MODEL_NAME defaults to voxtype-llm-wrapper. Extra flags for "ollama run" can
-# be passed in RUN_ARGS.
 
 set -u
 
-MODEL=${1:-voxtype-llm-wrapper}
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+URL=${LDC_URL:-http://127.0.0.1:8189}
+PROFILE=${LDC_PROFILE:-$(cat "$SCRIPT_DIR/.active-profile" 2>/dev/null || echo max)}
+REQUEST=${LDC_REQUEST:-$SCRIPT_DIR/prompts/$PROFILE.json}
+[ -f "$REQUEST" ] || { printf 'wrapper: no request file %s; run ./gen-prompts.sh\n' "$REQUEST" >&2; exit 1; }
 
 input=$(cat | sed -E 's/<\|[^|<>]*\|>//g; s#</?think>##g')
 [ -n "$(printf '%s' "$input" | tr -d '[:space:]')" ] || exit 0
 
-output=$(printf '%s\n' "$input" | ollama run --nowordwrap ${RUN_ARGS:-} "$MODEL") || exit 1
+# The transcript as a JSON string body, ending in \n like the examples' turns.
+transcript=$(printf '%s\n' "$input" | LC_ALL=C awk '
+    BEGIN { RS = "\001"; ORS = ""
+            for (i = 1; i < 32; i++) ctl[sprintf("%c", i)] = sprintf("\\u%04x", i)
+            ctl["\n"] = "\\n"; ctl["\t"] = "\\t"; ctl["\r"] = "\\r" }
+    { n = length($0)
+      for (i = 1; i <= n; i++) {
+          c = substr($0, i, 1)
+          if (c == "\\" || c == "\"") printf "\\%s", c
+          else if (c in ctl) printf "%s", ctl[c]
+          else printf "%s", c
+      } }')
+
+# Splice it in at the placeholder. ENVIRON, unlike awk -v, keeps backslashes.
+body=$(T=$transcript LC_ALL=C awk 'BEGIN { RS = "\001"; ORS = "" }
+    { i = index($0, "{{TRANSCRIPT}}")
+      print substr($0, 1, i - 1) ENVIRON["T"] substr($0, i + 14) }' "$REQUEST")
+
+response=$(printf '%s' "$body" | curl -sS --fail-with-body -H 'Content-Type: application/json' \
+    --data-binary @- "$URL/completion") || {
+    printf 'wrapper: request to %s failed: %s\n' "$URL" "$response" >&2; exit 1; }
+
+# Pull "content" out of the response and undo its JSON escapes.
+output=$(printf '%s' "$response" | LC_ALL=C awk '
+    function utf8(cp) {
+        if (cp < 128) return sprintf("%c", cp)
+        if (cp < 2048) return sprintf("%c%c", 192 + int(cp / 64), 128 + cp % 64)
+        if (cp < 65536) return sprintf("%c%c%c", 224 + int(cp / 4096), 128 + int(cp / 64) % 64, 128 + cp % 64)
+        return sprintf("%c%c%c%c", 240 + int(cp / 262144), 128 + int(cp / 4096) % 64, 128 + int(cp / 64) % 64, 128 + cp % 64)
+    }
+    function hex(h,   i, v) { v = 0; h = tolower(h); for (i = 1; i <= 4; i++) v = v * 16 + index("0123456789abcdef", substr(h, i, 1)) - 1; return v }
+    { doc = doc $0 }
+    END {
+        i = index(doc, "\"content\":\""); if (!i) exit 1
+        doc = substr(doc, i + 11); n = length(doc); out = ""
+        for (i = 1; i <= n; i++) {
+            c = substr(doc, i, 1)
+            if (c == "\"") break
+            if (c != "\\") { out = out c; continue }
+            c = substr(doc, ++i, 1)
+            if (c == "n") out = out "\n"; else if (c == "t") out = out "\t"; else if (c == "r") out = out "\r"
+            else if (c == "b") out = out "\b"; else if (c == "f") out = out "\f"
+            else if (c == "u") {
+                cp = hex(substr(doc, i + 1, 4)); i += 4
+                if (cp >= 55296 && cp < 56320 && substr(doc, i + 1, 2) == "\\u") {
+                    lo = hex(substr(doc, i + 3, 4)); i += 6; cp = 65536 + (cp - 55296) * 1024 + (lo - 56320)
+                }
+                out = out utf8(cp)
+            } else out = out c
+        }
+        printf "%s", out
+    }') || { printf 'wrapper: unexpected response from llama-server: %s\n' "$response" >&2; exit 1; }
+output=$(printf '%s' "$output" | sed -e '1s/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
 # Count output words that do not appear anywhere in the input. The input is
 # compared with spaces removed, so "wifi" covers "Wi-Fi" and "dot com" covers

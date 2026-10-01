@@ -1,6 +1,6 @@
 # Extra examples for the Qwen profiles (max, standard), which opt in with an
 # "# examples:" line in their profile. They fix self-corrections, email layout,
-# and spoken URLs on Qwen3.5 but made granite3.3:2b (fast) answer more requests.
+# and spoken URLs on Qwen3.5 but made granite3.3:2b answer more requests.
 # Same format as examples.tsv.
 move the standup to nine sorry I meant ten	Move the standup to ten.
 no that's fine just leave it as is	No, that's fine, just leave it as is.

@@ -1,30 +1,16 @@
 # Profile: max
-# Best edit quality. Measured 4.9 GB of RAM or VRAM while loaded; plan on a 16 GB machine.
-# Base model: Qwen3.5-4B, text-only GGUF conversion by Unsloth. License: Apache 2.0
-# (commercial use permitted). The Ollama library build of qwen3.5 bundles a vision
-# tower that costs about 1.3 GB of memory and does nothing for dictation, so the
-# weights are fetched from Hugging Face instead. setup.sh reads the two lines below
-# and downloads the file into models/ if it is missing or fails the checksum.
-# examples: examples.tsv examples-qwen.tsv
-# gguf: https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf
-# sha256: 00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4
-FROM models/Qwen3.5-4B-Q4_K_M.gguf
-
-PARAMETER temperature 0.0
-PARAMETER num_ctx 4096
-PARAMETER stop "<|im_end|>"
-PARAMETER stop "<|im_start|>"
-
-# A raw GGUF import has no chat template, so this supplies Qwen's ChatML format
-# with thinking disabled: the assistant turn opens with an empty <think> block,
-# exactly what Qwen's own template emits for enable_thinking=false. Without
-# this the model reasons out loud before answering, and that text would be
-# typed into your document.
-TEMPLATE """{{- range .Messages }}<|im_start|>{{ .Role }}
-{{ .Content }}<|im_end|>
-{{ end }}<|im_start|>assistant
-<think>
-
-</think>
-
-"""
+# Best edit quality. Measured 3.0 GB of VRAM under llama-server.
+# Base model: Qwen3.5-4B, text-only GGUF conversion by Unsloth. License: Apache
+# 2.0 (commercial use permitted). Unsloth's text-only build skips the vision
+# tower that other qwen3.5 builds bundle, which costs about 1.3 GB and does
+# nothing for dictation.
+#
+# Read by gen-prompts.sh and setup.sh as KEY=value lines.
+GGUF_URL=https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf
+GGUF_SHA256=00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4
+PROMPT=system_prompt.txt
+EXAMPLES="examples.tsv examples-qwen.tsv"
+# ChatML with thinking disabled: the reply opens with an empty <think> block,
+# which is what Qwen's own template emits for enable_thinking=false. Without it
+# the model reasons out loud and that text would be typed into your document.
+CHAT_FORMAT=qwen-nothink
