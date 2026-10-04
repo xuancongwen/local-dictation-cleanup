@@ -11,6 +11,11 @@
 # writes, else max. LDC_URL overrides the server address and LDC_REQUEST the
 # request file. Only curl is needed; JSON is encoded and decoded in awk.
 #
+# Before the model call, hesitation sounds (uh, um, uhm, erm, hmm, and their
+# drawn-out spellings) are dropped from the transcript, and a transcript of
+# nothing else prints nothing. The models kept typing a lone "uh" or "um" back
+# out. "er" is left alone ("the ER"), as are "uh-huh" and "mhm", which mean yes.
+#
 # Around the model call it adds three defenses against dictation that tries to
 # take over the model, and against edits that change what was said:
 #
@@ -27,9 +32,10 @@
 # When a check fails, a note saying why goes to stderr.
 #
 # If LDC_LOG names a file, one JSON line per dictation is appended to it: the
-# time, profile, model time in ms, the transcript, the model's output, what
-# was printed, and why the guard fired (empty if it did not). Off by default,
-# since the log keeps every dictation in plain text. A failed write is ignored.
+# time, profile, model time in ms, the transcript as received, the model's
+# output, what was printed, and why the guard fired (empty if it did not). Off
+# by default, since the log keeps every dictation in plain text. A failed
+# write is ignored.
 
 set -u
 
@@ -39,8 +45,15 @@ PROFILE=${LDC_PROFILE:-$(cat "$SCRIPT_DIR/.active-profile" 2>/dev/null || echo m
 REQUEST=${LDC_REQUEST:-$SCRIPT_DIR/prompts/$PROFILE.json}
 [ -f "$REQUEST" ] || { printf 'wrapper: no request file %s; run ./gen-prompts.sh\n' "$REQUEST" >&2; exit 1; }
 
-input=$(cat | sed -E 's/<\|[^|<>]*\|>//g; s#</?think>##g')
-[ -n "$(printf '%s' "$input" | tr -d '[:space:]')" ] || exit 0
+raw=$(cat | sed -E 's/<\|[^|<>]*\|>//g; s#</?think>##g')
+input=$(printf '%s\n' "$raw" | LC_ALL=C awk '{
+    out = ""
+    for (i = 1; i <= NF; i++) {
+        w = tolower($i); gsub(/[^a-z]/, "", w)
+        if (w ~ /^(u+h+|u+m+|u+h+m+|e+r+m+|h+m+)$/ && $i !~ /^[A-Z][A-Z]/) continue
+        out = out (out == "" ? "" : " ") $i
+    }
+    print out }')
 
 # All of stdin as a JSON string body (no surrounding quotes).
 json_str() {
@@ -62,10 +75,16 @@ log() {
     { mkdir -p "$(dirname "$LDC_LOG")" &&
       printf '{"time":"%s","profile":"%s","ms":%s,"input":"%s","model":"%s","typed":"%s","guard":"%s"}\n' \
           "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$PROFILE" "${1:-null}" \
-          "$(printf '%s' "$input" | json_str)" "$(printf '%s' "$2" | json_str)" \
+          "$(printf '%s' "$raw" | json_str)" "$(printf '%s' "$2" | json_str)" \
           "$(printf '%s' "$3" | json_str)" "$(printf '%s' "$4" | json_str)" >> "$LDC_LOG"
     } 2>/dev/null || :
 }
+
+# Nothing but hesitation sounds, or nothing at all.
+if [ -z "$(printf '%s' "$input" | tr -d '[:space:]')" ]; then
+    [ -z "$(printf '%s' "$raw" | tr -d '[:space:]')" ] || log "" "" "" ""
+    exit 0
+fi
 
 # The transcript as a JSON string body, ending in \n like the examples' turns.
 transcript=$(printf '%s\n' "$input" | json_str)
