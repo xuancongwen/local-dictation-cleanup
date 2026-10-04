@@ -33,8 +33,10 @@
 #      the speaker never said in any form (number-check.awk): a changed port or
 #      price, or the answer to dictated arithmetic.
 #
-# When a check fails, a note saying why goes to stderr. Otherwise an email the
-# model left on one line is laid out on separate lines (email-layout.awk).
+# When a check fails, a note saying why goes to stderr. Otherwise a closing
+# "Thank you." or the like that the speaker never said is dropped
+# (courtesy.awk), and an email the model left on one line is laid out on
+# separate lines (email-layout.awk).
 #
 # If LDC_LOG names a file, one JSON line per dictation is appended to it: the
 # time, profile, model time in ms, the transcript as received, the model's
@@ -197,7 +199,10 @@ if [ -n "$note" ]; then
     printf 'wrapper: %s; typing the raw transcript\n' "$note" >&2
     typed=$input
 else
-    typed=$(printf '%s\n' "$output" | LC_ALL=C awk -f "$SCRIPT_DIR/email-layout.awk")
+    # A closing courtesy the speaker never said is dropped (courtesy.awk),
+    # then a one-line email is laid out (email-layout.awk).
+    typed=$(printf '%s' "$output" | T=$input LC_ALL=C awk -f "$SCRIPT_DIR/courtesy.awk" |
+        LC_ALL=C awk -f "$SCRIPT_DIR/email-layout.awk")
 fi
 log "$ms" "$output" "$typed" "$note"
 printf '%s\n' "$typed"

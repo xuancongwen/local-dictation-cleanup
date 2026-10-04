@@ -108,7 +108,10 @@ voxtype runs `wrapper.sh`, not the model directly. Around each request it:
    of the dictation, or a rewrite of a long one. A resolved self-correction
    only drops words, so it passes. Replayed over 378 real dictations, this
    fired once, on a 51-word dictation the model had reworded.
-4. Falls back to the raw transcript if the output has a number in digits that
+4. Drops a closing "Thank you.", "Thanks!" or "Hope this helps." that the
+   speaker never said (`courtesy.awk`). A dictated bug report ending in a
+   question once came back with "Thank you." added. A dictated one stays.
+5. Falls back to the raw transcript if the output has a number in digits that
    the speaker never said in any form (`number-check.awk`). It turns spoken
    numbers into every value they could mean ("three thousand" 3000, "nineteen
    ninety nine" 1999, "five five five one two three four" 555-1234), so a
@@ -195,8 +198,8 @@ followed by `\n`, POST it, and read `content` from the response. Every request
 shares everything before the placeholder, so llama-server's prompt cache covers
 it. Run the server with `-np 1 -ub 64`, as `setup.sh` does, to keep that cache
 effective for the Qwen profiles. Port the guard in `wrapper.sh` and
-`number-check.awk` too, and `email-layout.awk` if you use `tiny`; together
-they are about 200 lines.
+`number-check.awk` too, `courtesy.awk`, and `email-layout.awk` if you use
+`tiny`; together they are about 230 lines.
 
 ## Changing behaviour
 
@@ -215,7 +218,8 @@ they are about 200 lines.
   helped `max` and hurt `standard`).
 - `gen-prompts.sh` renders these into the committed `prompts/<name>.json`.
   Don't edit those by hand; `setup.sh` regenerates them.
-- `wrapper.sh` and `number-check.awk`: input sanitizing and the output guard.
+- `wrapper.sh`, `number-check.awk` and `courtesy.awk`: input sanitizing and
+  the output guard.
   `email-layout.awk` puts a one-line email (formal greeting, formal closing
   and name) on separate lines; `tiny` writes every email on one line, and
   examples showing the layout made it answer more requests.
