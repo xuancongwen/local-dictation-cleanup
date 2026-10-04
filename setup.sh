@@ -200,7 +200,7 @@ else
 command = "$SCRIPT_DIR/wrapper.sh"
 timeout_ms = 30000
 trim = true
-fallback_on_empty = true
+fallback_on_empty = false
 EOT
 fi
 

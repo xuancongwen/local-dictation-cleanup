@@ -166,10 +166,15 @@ with `ollama rm`.
 command = "/path/to/local-dictation-cleanup/wrapper.sh"
 timeout_ms = 30000
 trim = true
-fallback_on_empty = true
+fallback_on_empty = false
 ```
 
-On timeout or error voxtype types the raw transcript.
+On timeout or error voxtype types the raw transcript. Keep
+`fallback_on_empty = false`: `wrapper.sh` prints nothing only for a
+dictation of hesitation sounds ("uh", "um"), and with it on, voxtype types
+those anyway. If the model itself returns nothing, `wrapper.sh` types the
+transcript. An existing block made by an older `setup.sh` has it on; change
+it by hand.
 
 To keep a record of what the cleanup did, set `LDC_LOG` to a file in the
 command; voxtype runs it through `sh`:

@@ -87,7 +87,8 @@ log() {
     } 2>/dev/null || :
 }
 
-# Nothing but hesitation sounds, or nothing at all.
+# Nothing but hesitation sounds, or nothing at all: print nothing. voxtype
+# types that only with fallback_on_empty = false.
 if [ -z "$(printf '%s' "$input" | tr -d '[:space:]')" ]; then
     [ -z "$(printf '%s' "$raw" | tr -d '[:space:]')" ] || log "" "" "" ""
     exit 0
@@ -194,6 +195,11 @@ elif [ "$counted" -ge 6 ] && [ $((kept * 10)) -lt $((counted * 6)) ] && [ "$new"
     note=$(printf 'output had only %d of %d dictated words, and %d not in the input' "$kept" "$counted" "$new")
 elif [ -n "$badnums" ]; then
     note="output had numbers not in the input ($badnums)"
+elif [ -z "$output" ]; then
+    # Only a transcript of hesitation sounds should print nothing (above). An
+    # empty reply to anything else would lose the dictation, so voxtype's
+    # fallback_on_empty can stay off.
+    note="model returned nothing"
 fi
 if [ -n "$note" ]; then
     printf 'wrapper: %s; typing the raw transcript\n' "$note" >&2
