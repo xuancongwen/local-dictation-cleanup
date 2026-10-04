@@ -232,13 +232,22 @@ effective for the Qwen profiles. Port the guard in `wrapper.sh` and
 To try a prompt or examples change, run `./tune.sh PROFILE PROMPT_FILE
 [EXAMPLES_FILE...]`. It runs the full suite with the current and candidate
 prompt on the same model and prints pass/fail, obeyed cases (failed attack or
-AI-request cases, or the guard firing), latency, prompt tokens, the cases fixed
-and broken, and a verdict: never accept more obeyed cases, then fewer failures
-overall, then lower latency. Expect churn; check every profile that shares
-the file you changed, and read the broken cases for copied examples.
+AI-request cases, or the guard firing), generation time, prompt tokens, the
+cases fixed and broken, and a verdict: never accept more obeyed cases, then
+fewer failures overall, then faster generation. Expect churn; check every
+profile that shares the file you changed, and read the broken cases for copied
+examples.
+
+`tune.sh` turns off llama-server's prompt cache (`LDC_CACHE=0`), so each case
+is evaluated from scratch and a run is repeatable: two runs give identical
+output. With the cache on, the server resumes from whichever checkpoint it
+saved, and borderline cases flip between runs; on `max` the same candidate
+came out ADOPT once and REJECT twice. Uncached runs take about 3 minutes per
+prompt on `max` instead of 45 seconds.
 
 Run `./test.sh [PROFILE]` after any change; it checks that the server is
-serving that profile's model first.
+serving that profile's model first. `LDC_CACHE=0 ./test.sh` gives a
+repeatable run; without it, results can move by a case or two.
 
 ## Troubleshooting
 

@@ -11,6 +11,11 @@
 # writes, else max. LDC_URL overrides the server address and LDC_REQUEST the
 # request file. Only curl is needed; JSON is encoded and decoded in awk.
 #
+# LDC_CACHE=0 turns off llama-server's prompt cache for the request, so the
+# whole prompt is evaluated from scratch (about 1 s on max instead of 0.25 s).
+# Output then no longer depends on which cached checkpoint the server resumes
+# from, which can flip a borderline case; tune.sh uses it for repeatable runs.
+#
 # Before the model call, hesitation sounds (uh, um, uhm, erm, hmm, and their
 # drawn-out spellings) are dropped from the transcript, and a transcript of
 # nothing else prints nothing. The models kept typing a lone "uh" or "um" back
@@ -39,10 +44,11 @@
 # separate lines (email-layout.awk).
 #
 # If LDC_LOG names a file, one JSON line per dictation is appended to it: the
-# time, profile, model time in ms, the transcript as received, the model's
-# output, what was printed, and why the guard fired (empty if it did not). Off
-# by default, since the log keeps every dictation in plain text. A failed
-# write is ignored.
+# time, profile, model time in ms (prompt plus generation, then generation
+# alone as gen_ms), the transcript as received, the model's output, what was
+# printed, and why the guard fired (empty if it did not). Off by default,
+# since the log keeps every dictation in plain text. A failed write is
+# ignored.
 
 set -u
 
@@ -80,8 +86,8 @@ json_str() {
 log() {
     [ -n "${LDC_LOG:-}" ] || return 0
     { mkdir -p "$(dirname "$LDC_LOG")" &&
-      printf '{"time":"%s","profile":"%s","ms":%s,"input":"%s","model":"%s","typed":"%s","guard":"%s"}\n' \
-          "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$PROFILE" "${1:-null}" \
+      printf '{"time":"%s","profile":"%s","ms":%s,"gen_ms":%s,"input":"%s","model":"%s","typed":"%s","guard":"%s"}\n' \
+          "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$PROFILE" "${1:-null}" "${gen_ms:-null}" \
           "$(printf '%s' "$raw" | json_str)" "$(printf '%s' "$2" | json_str)" \
           "$(printf '%s' "$3" | json_str)" "$(printf '%s' "$4" | json_str)" >> "$LDC_LOG"
     } 2>/dev/null || :
@@ -101,17 +107,20 @@ transcript=$(printf '%s\n' "$input" | json_str)
 body=$(T=$transcript LC_ALL=C awk 'BEGIN { RS = "\001"; ORS = "" }
     { i = index($0, "{{TRANSCRIPT}}")
       print substr($0, 1, i - 1) ENVIRON["T"] substr($0, i + 14) }' "$REQUEST")
+[ "${LDC_CACHE:-1}" != 0 ] || body=$(printf '%s' "$body" | sed 's/"cache_prompt": true/"cache_prompt": false/')
 
 response=$(printf '%s' "$body" | curl -sS --fail-with-body -H 'Content-Type: application/json' \
     --data-binary @- "$URL/completion") || {
     printf 'wrapper: request to %s failed: %s\n' "$URL" "$response" >&2
     log "" "" "" "request failed"; exit 1; }
 
-# Prompt plus generation time, from llama-server's own timings.
-ms=$(printf '%s' "$response" | LC_ALL=C awk '{ doc = doc $0 } END {
-    if (match(doc, /"prompt_ms":[0-9.]+/)) t += substr(doc, RSTART + 12, RLENGTH - 12)
-    if (match(doc, /"predicted_ms":[0-9.]+/)) t += substr(doc, RSTART + 15, RLENGTH - 15)
-    printf "%d", t }')
+# Prompt plus generation time, and generation time alone, from llama-server's
+# own timings.
+set -- $(printf '%s' "$response" | LC_ALL=C awk '{ doc = doc $0 } END {
+    if (match(doc, /"prompt_ms":[0-9.]+/)) p = substr(doc, RSTART + 12, RLENGTH - 12)
+    if (match(doc, /"predicted_ms":[0-9.]+/)) g = substr(doc, RSTART + 15, RLENGTH - 15)
+    printf "%d %d\n", p + g, g }')
+ms=$1; gen_ms=$2
 
 # Pull "content" out of the response and undo its JSON escapes.
 output=$(printf '%s' "$response" | LC_ALL=C awk '

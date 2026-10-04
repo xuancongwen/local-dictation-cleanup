@@ -25,6 +25,10 @@
 # answered or rewrote instead of editing, though what got typed was harmless.
 #
 # Exit status is non-zero if any scored case FAILs. NEAR does not fail.
+#
+# With the prompt cache on (the default), a borderline case can flip between
+# runs. LDC_CACHE=0 evaluates every case from scratch (slower), so two runs
+# give identical output; tune.sh does that.
 
 set -u
 
