@@ -16,7 +16,7 @@
 # nothing else prints nothing. The models kept typing a lone "uh" or "um" back
 # out. "er" is left alone ("the ER"), as are "uh-huh" and "mhm", which mean yes.
 #
-# Around the model call it adds three defenses against dictation that tries to
+# Around the model call it adds four defenses against dictation that tries to
 # take over the model, and against edits that change what was said:
 #
 #   1. Chat-template control tokens (<|im_end|>, <|start_of_role|>, <think>,
@@ -25,7 +25,11 @@
 #   2. If the output contains more than a few words the speaker never said,
 #      the model has answered, translated, summarized, or role-played instead
 #      of editing, and the raw transcript is printed instead.
-#   3. The same happens if the output has a number, written in digits, that
+#   3. The same happens if the output keeps under 60% of the dictated words
+#      and adds two or more of its own: a short answer in place of the
+#      dictation, or a rewrite of it. An edit that only drops words (a
+#      resolved self-correction) passes.
+#   4. The same happens if the output has a number, written in digits, that
 #      the speaker never said in any form (number-check.awk): a changed port or
 #      price, or the answer to dictated arithmetic.
 #
@@ -141,27 +145,50 @@ output=$(printf '%s' "$output" | sed -e '1s/^[[:space:]]*//' -e 's/[[:space:]]*$
 # Count output words that do not appear anywhere in the input. The input is
 # compared with spaces removed, so "wifi" covers "Wi-Fi" and "dot com" covers
 # ".com". Numbers are skipped because the model writes spoken numbers as
-# digits.
+# digits. Also count the dictated words (three letters or more, other than
+# spoken symbols and number words, which the model rewrites) that the output
+# keeps, compared the same way.
 novel=$(printf '%s\n%s\n' "$(printf '%s' "$input" | tr '\n' ' ')" "$output" | LC_ALL=C awk '
-    NR == 1 { src = tolower($0); gsub(/[^a-z0-9]/, "", src); next }
+    BEGIN {
+        n = split("dot slash colon question mark equals new line paragraph hyphen dash underscore " \
+                  "comma period semicolon one two three four five six seven eight nine ten eleven " \
+                  "twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty thirty " \
+                  "forty fifty sixty seventy eighty ninety hundred thousand million billion", sp, " ")
+        for (i = 1; i <= n; i++) spoken[sp[i]] = 1
+    }
+    NR == 1 {
+        src = tolower($0); gsub(/[^a-z0-9]/, "", src)
+        line = tolower($0); gsub(/[^a-z0-9]+/, " ", line); nin = split(line, said, " ")
+        next
+    }
     {
-        line = tolower($0); gsub(/[^a-z0-9]+/, " ", line)
+        line = tolower($0); out = out line; gsub(/[^a-z0-9]+/, " ", line)
         n = split(line, w, " ")
         for (i = 1; i <= n; i++) {
             total++
             if (w[i] !~ /^[0-9]+$/ && index(src, w[i]) == 0) novel++
         }
     }
-    END { printf "%d %d\n", novel, total }')
-new=${novel% *}; total=${novel#* }
+    END {
+        gsub(/[^a-z0-9]/, "", out)
+        for (i = 1; i <= nin; i++) {
+            if (length(said[i]) < 3 || said[i] in spoken) continue
+            counted++; if (index(out, said[i])) kept++
+        }
+        printf "%d %d %d %d\n", novel, total, kept, counted
+    }')
+set -- $novel; new=$1; total=$2; kept=$3; counted=$4
 
 badnums=$(printf '%s\n%s\n' "$(printf '%s' "$input" | tr '\n' ' ')" "$output" |
     LC_ALL=C awk -f "$SCRIPT_DIR/number-check.awk")
 
-# More than 3 unexplained words, and more than a quarter of the output.
+# More than 3 unexplained words, and more than a quarter of the output. Or
+# under 60% of 6+ dictated words kept, with 2+ unexplained words.
 note=""
 if [ "$new" -gt 3 ] && [ $((new * 4)) -gt "$total" ]; then
     note=$(printf 'output had %d of %d words not in the input' "$new" "$total")
+elif [ "$counted" -ge 6 ] && [ $((kept * 10)) -lt $((counted * 6)) ] && [ "$new" -ge 2 ]; then
+    note=$(printf 'output had only %d of %d dictated words, and %d not in the input' "$kept" "$counted" "$new")
 elif [ -n "$badnums" ]; then
     note="output had numbers not in the input ($badnums)"
 fi

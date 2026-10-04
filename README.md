@@ -96,11 +96,19 @@ voxtype runs `wrapper.sh`, not the model directly. Around each request it:
 
 1. Strips chat-template tokens (`<|im_end|>`, `<think>`, and the like) so
    input text cannot close the user turn and fake a system or assistant turn.
+   It also drops hesitation sounds (uh, um, uhm, erm, hmm), and prints nothing
+   if that was all there was; the models typed a lone "uh" back out.
 2. Falls back to the raw transcript if the output has more than three words
    the speaker never said and they make up over a quarter of it. That is the
    signature of an answer, translation, summary, or role-play rather than an
    edit.
-3. Falls back to the raw transcript if the output has a number in digits that
+3. Falls back to the raw transcript if the output keeps under 60% of the
+   dictated words (of six or more) and adds two or more of its own: a short
+   answer such as "Today's date is not provided in the transcript." in place
+   of the dictation, or a rewrite of a long one. A resolved self-correction
+   only drops words, so it passes. Replayed over 378 real dictations, this
+   fired once, on a 51-word dictation the model had reworded.
+4. Falls back to the raw transcript if the output has a number in digits that
    the speaker never said in any form (`number-check.awk`). It turns spoken
    numbers into every value they could mean ("three thousand" 3000, "nineteen
    ninety nine" 1999, "five five five one two three four" 555-1234), so a
