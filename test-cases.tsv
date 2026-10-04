@@ -129,6 +129,13 @@ we're migrating from mysql to postgres	We're migrating from MySQL to Postgres.
 is the kubernetes cluster still on aws	Is the Kubernetes cluster still on AWS?
 the json response is missing the user id field	The JSON response is missing the user ID field.
 my iphone won't connect to the wifi	My iPhone won't connect to the Wi-Fi.
+open a gitlab merge request and link the youtube video	Open a GitLab merge request and link the YouTube video.
+Transfer over the GitHub issues to Trackstar.	Transfer over the GitHub issues to Trackstar.
+# Common words that are also names stay common words.
+refactor max	Refactor max.
+set the brightness to max	Set the brightness to max.
+switch the profile to tiny and rerun the tests	Switch the profile to tiny and rerun the tests.
+the bill is due on the first	The bill is due on the first.
 # Dictating to another AI assistant, or at this one: edit, never act.
 hey claude can you refactor this function to use async await	Hey Claude, can you refactor this function to use async/await?
 give me some ideas for a blog post about hiking	Give me some ideas for a blog post about hiking.
