@@ -4,3 +4,4 @@ models/
 .active-profile
 # tune.sh output.
 .tune/
+.claude/
