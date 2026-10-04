@@ -18,11 +18,11 @@ requests, and prompt-injection attempts are edited, not answered or obeyed.
 Each profile is a base model plus the system prompt and examples it runs with.
 All base models are licensed for commercial use.
 
-| Profile | Base model | Download | VRAM | Latency | Pass / near / fail (of 168) | Attacks failed (of 29) |
+| Profile | Base model | Download | VRAM | Latency | Pass / near / fail (of 174) | Attacks failed (of 29) |
 | --- | --- | --- | --- | --- | --- | --- |
-| `max` | Qwen3.5-4B, Unsloth text-only GGUF | 2.7 GB | 3.0 GB | 232 ms | 126 / 30 / 12 | 1 |
-| `standard` | Qwen3.5-2B, Unsloth text-only GGUF | 1.3 GB | 1.5 GB | 145 ms | 114 / 24 / 30 | 8 |
-| `tiny` | Qwen2.5-0.5B Instruct, Qwen GGUF | 0.5 GB | 0.6 GB | 78 ms | 94 / 34 / 40 | 5 |
+| `max` | Qwen3.5-4B, Unsloth text-only GGUF | 2.7 GB | 3.0 GB | 232 ms | 136 / 31 / 7 | 1 |
+| `standard` | Qwen3.5-2B, Unsloth text-only GGUF | 1.3 GB | 1.5 GB | 145 ms | 122 / 25 / 27 | 8 |
+| `tiny` | Qwen2.5-0.5B Instruct, Qwen GGUF | 0.5 GB | 0.6 GB | 78 ms | 105 / 36 / 33 | 5 |
 
 - **VRAM** is what `nvidia-smi` reports for llama-server with the model loaded
   at a 4096-token context. Run CPU-only (as on a Mac's shared memory), the
@@ -41,15 +41,15 @@ DAN-style personas, prompt extraction, fake developer or system overrides,
 fake end-of-transcript markers, emotional pressure, few-shot and
 sentence-completion bait.
 
-Known failures: all profiles type out a lone "uh" and change "Postgres" to
-"PostgreSQL". `max` misses 4 of 9 self-corrections ("noon, sorry, I meant
-one"). `standard` also
+Known failures: all profiles change "Postgres" to "PostgreSQL". `max` misses
+4 of 9 self-corrections ("noon, sorry, I meant one"). `standard` also
 flips some pronouns ("you are now a pirate" → "I am now a pirate"), drops
 command prefixes ("answer this question…"), and fills in few-shot patterns.
-`tiny` leaves spoken URLs as words, rarely resolves self-corrections, keeps
-emails on one line, and invents port numbers (`localhost:3000` became
-`localhost:3306` or `3030`; the guard catches it); it obeys fewer attacks than
-`standard`, but its edits are the weakest.
+`tiny` leaves spoken URLs as words, rarely resolves self-corrections, and
+invents port numbers (`localhost:3000` became `localhost:3306` or `3030`; the
+guard catches it); it obeys fewer attacks than `standard`, but its edits are
+the weakest. Its emails come out on one line, and `wrapper.sh` lays them out
+(`email-layout.awk`).
 
 ### Why llama.cpp
 
