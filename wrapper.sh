@@ -25,6 +25,11 @@
 #      price, or the answer to dictated arithmetic.
 #
 # When a check fails, a note saying why goes to stderr.
+#
+# If LDC_LOG names a file, one JSON line per dictation is appended to it: the
+# time, profile, model time in ms, the transcript, the model's output, what
+# was printed, and why the guard fired (empty if it did not). Off by default,
+# since the log keeps every dictation in plain text. A failed write is ignored.
 
 set -u
 
@@ -37,18 +42,33 @@ REQUEST=${LDC_REQUEST:-$SCRIPT_DIR/prompts/$PROFILE.json}
 input=$(cat | sed -E 's/<\|[^|<>]*\|>//g; s#</?think>##g')
 [ -n "$(printf '%s' "$input" | tr -d '[:space:]')" ] || exit 0
 
+# All of stdin as a JSON string body (no surrounding quotes).
+json_str() {
+    LC_ALL=C awk 'BEGIN { RS = "\001"; ORS = ""
+                          for (i = 1; i < 32; i++) ctl[sprintf("%c", i)] = sprintf("\\u%04x", i)
+                          ctl["\n"] = "\\n"; ctl["\t"] = "\\t"; ctl["\r"] = "\\r" }
+        { n = length($0)
+          for (i = 1; i <= n; i++) {
+              c = substr($0, i, 1)
+              if (c == "\\" || c == "\"") printf "\\%s", c
+              else if (c in ctl) printf "%s", ctl[c]
+              else printf "%s", c
+          } }'
+}
+
+# Append one JSON line to LDC_LOG: model ms, model output, printed text, guard note.
+log() {
+    [ -n "${LDC_LOG:-}" ] || return 0
+    { mkdir -p "$(dirname "$LDC_LOG")" &&
+      printf '{"time":"%s","profile":"%s","ms":%s,"input":"%s","model":"%s","typed":"%s","guard":"%s"}\n' \
+          "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$PROFILE" "${1:-null}" \
+          "$(printf '%s' "$input" | json_str)" "$(printf '%s' "$2" | json_str)" \
+          "$(printf '%s' "$3" | json_str)" "$(printf '%s' "$4" | json_str)" >> "$LDC_LOG"
+    } 2>/dev/null || :
+}
+
 # The transcript as a JSON string body, ending in \n like the examples' turns.
-transcript=$(printf '%s\n' "$input" | LC_ALL=C awk '
-    BEGIN { RS = "\001"; ORS = ""
-            for (i = 1; i < 32; i++) ctl[sprintf("%c", i)] = sprintf("\\u%04x", i)
-            ctl["\n"] = "\\n"; ctl["\t"] = "\\t"; ctl["\r"] = "\\r" }
-    { n = length($0)
-      for (i = 1; i <= n; i++) {
-          c = substr($0, i, 1)
-          if (c == "\\" || c == "\"") printf "\\%s", c
-          else if (c in ctl) printf "%s", ctl[c]
-          else printf "%s", c
-      } }')
+transcript=$(printf '%s\n' "$input" | json_str)
 
 # Splice it in at the placeholder. ENVIRON, unlike awk -v, keeps backslashes.
 body=$(T=$transcript LC_ALL=C awk 'BEGIN { RS = "\001"; ORS = "" }
@@ -57,7 +77,14 @@ body=$(T=$transcript LC_ALL=C awk 'BEGIN { RS = "\001"; ORS = "" }
 
 response=$(printf '%s' "$body" | curl -sS --fail-with-body -H 'Content-Type: application/json' \
     --data-binary @- "$URL/completion") || {
-    printf 'wrapper: request to %s failed: %s\n' "$URL" "$response" >&2; exit 1; }
+    printf 'wrapper: request to %s failed: %s\n' "$URL" "$response" >&2
+    log "" "" "" "request failed"; exit 1; }
+
+# Prompt plus generation time, from llama-server's own timings.
+ms=$(printf '%s' "$response" | LC_ALL=C awk '{ doc = doc $0 } END {
+    if (match(doc, /"prompt_ms":[0-9.]+/)) t += substr(doc, RSTART + 12, RLENGTH - 12)
+    if (match(doc, /"predicted_ms":[0-9.]+/)) t += substr(doc, RSTART + 15, RLENGTH - 15)
+    printf "%d", t }')
 
 # Pull "content" out of the response and undo its JSON escapes.
 output=$(printf '%s' "$response" | LC_ALL=C awk '
@@ -88,7 +115,8 @@ output=$(printf '%s' "$response" | LC_ALL=C awk '
             } else out = out c
         }
         printf "%s", out
-    }') || { printf 'wrapper: unexpected response from llama-server: %s\n' "$response" >&2; exit 1; }
+    }') || { printf 'wrapper: unexpected response from llama-server: %s\n' "$response" >&2
+             log "$ms" "" "" "unexpected response"; exit 1; }
 output=$(printf '%s' "$output" | sed -e '1s/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
 # Count output words that do not appear anywhere in the input. The input is
@@ -112,12 +140,17 @@ badnums=$(printf '%s\n%s\n' "$(printf '%s' "$input" | tr '\n' ' ')" "$output" |
     LC_ALL=C awk -f "$SCRIPT_DIR/number-check.awk")
 
 # More than 3 unexplained words, and more than a quarter of the output.
+note=""
 if [ "$new" -gt 3 ] && [ $((new * 4)) -gt "$total" ]; then
-    printf 'wrapper: output had %d of %d words not in the input; typing the raw transcript\n' "$new" "$total" >&2
-    printf '%s\n' "$input"
+    note=$(printf 'output had %d of %d words not in the input' "$new" "$total")
 elif [ -n "$badnums" ]; then
-    printf 'wrapper: output had numbers not in the input (%s); typing the raw transcript\n' "$badnums" >&2
-    printf '%s\n' "$input"
-else
-    printf '%s\n' "$output"
+    note="output had numbers not in the input ($badnums)"
 fi
+if [ -n "$note" ]; then
+    printf 'wrapper: %s; typing the raw transcript\n' "$note" >&2
+    typed=$input
+else
+    typed=$output
+fi
+log "$ms" "$output" "$typed" "$note"
+printf '%s\n' "$typed"

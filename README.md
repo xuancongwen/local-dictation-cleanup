@@ -160,6 +160,23 @@ fallback_on_empty = true
 
 On timeout or error voxtype types the raw transcript.
 
+To keep a record of what the cleanup did, set `LDC_LOG` to a file in the
+command; voxtype runs it through `sh`:
+
+```toml
+command = "LDC_LOG=$HOME/.local/state/local-dictation-cleanup/dictation.jsonl /path/to/local-dictation-cleanup/wrapper.sh"
+```
+
+Each dictation appends one JSON line: `time`, `profile`, `ms` (llama-server's
+prompt plus generation time), `input`, `model` (the model's output), `typed`
+(what was printed), and `guard` (why the guard fell back to the transcript, or
+empty). The log keeps every dictation in plain text, so it is off unless set.
+To find the edits that changed the wording:
+
+```sh
+jq -r 'select(.model != .input) | "\(.input)\n  -> \(.typed)\n"' ~/.local/state/local-dictation-cleanup/dictation.jsonl
+```
+
 ## Using it from an app
 
 `prompts/<profile>.json` is a complete request body for llama-server's
