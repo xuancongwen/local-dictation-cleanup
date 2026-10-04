@@ -195,7 +195,8 @@ followed by `\n`, POST it, and read `content` from the response. Every request
 shares everything before the placeholder, so llama-server's prompt cache covers
 it. Run the server with `-np 1 -ub 64`, as `setup.sh` does, to keep that cache
 effective for the Qwen profiles. Port the guard in `wrapper.sh` and
-`number-check.awk` too; together they are about 100 lines.
+`number-check.awk` too, and `email-layout.awk` if you use `tiny`; together
+they are about 200 lines.
 
 ## Changing behaviour
 
@@ -215,6 +216,9 @@ effective for the Qwen profiles. Port the guard in `wrapper.sh` and
 - `gen-prompts.sh` renders these into the committed `prompts/<name>.json`.
   Don't edit those by hand; `setup.sh` regenerates them.
 - `wrapper.sh` and `number-check.awk`: input sanitizing and the output guard.
+  `email-layout.awk` puts a one-line email (formal greeting, formal closing
+  and name) on separate lines; `tiny` writes every email on one line, and
+  examples showing the layout made it answer more requests.
 
 To try a prompt or examples change, run `./tune.sh PROFILE PROMPT_FILE
 [EXAMPLES_FILE...]`. It runs the full suite with the current and candidate
